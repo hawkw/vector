@@ -116,6 +116,7 @@ grok = "1.0.0"
 nom = "5.0.0"
 uuid = { version = "0.7", features = ["serde", "v4"] }
 exitcode = "1.1.2"
+systemd = { version = "0.4", optional = true, git = "https://github.com/timberio/rust-systemd" }
 
 [build-dependencies]
 prost-build = "0.4.0"
@@ -134,7 +135,7 @@ pretty_assertions = "0.6.1"
 tokio-test = { git = "https://github.com/tokio-rs/tokio", branch = "v0.1.x" }
 
 [features]
-default = ["rdkafka", "leveldb", "jemallocator"]
+default = ["rdkafka", "leveldb", "jemallocator", "systemd"]
 docker = [
   "cloudwatch-integration-tests",
   "es-integration-tests",
