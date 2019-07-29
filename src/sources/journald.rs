@@ -7,6 +7,7 @@ use chrono::TimeZone;
 use futures::{future, sync::mpsc, Future, Sink};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
 use std::time;
@@ -25,6 +26,7 @@ lazy_static! {
 pub struct JournaldConfig {
     pub current_runtime_only: Option<bool>,
     pub local_only: Option<bool>,
+    pub units: Vec<String>,
 }
 
 #[typetag::serde(name = "journald")]
@@ -37,7 +39,21 @@ impl SourceConfig for JournaldConfig {
         )
         .map_err(|err| format!("{}", err))?;
 
-        Ok(journald_source(journal, out))
+        // Map the given unit names into valid systemd units by
+        // appending ".service" if no extension is present.
+        let units = self
+            .units
+            .iter()
+            .map(|unit| {
+                if let Some(_) = unit.find('.') {
+                    unit.into()
+                } else {
+                    format!("{}.service", unit)
+                }
+            })
+            .collect::<HashSet<String>>();
+
+        Ok(journald_source(journal, out, units))
     }
 
     fn output_type(&self) -> DataType {
@@ -45,7 +61,11 @@ impl SourceConfig for JournaldConfig {
     }
 }
 
-fn journald_source(journal: Journal, out: mpsc::Sender<Event>) -> super::Source {
+fn journald_source(
+    journal: Journal,
+    out: mpsc::Sender<Event>,
+    units: HashSet<String>,
+) -> super::Source {
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
     let out = out
@@ -57,6 +77,7 @@ fn journald_source(journal: Journal, out: mpsc::Sender<Event>) -> super::Source 
 
         let journald_server = JournaldServer {
             journal,
+            units,
             channel: out,
             shutdown: shutdown_rx,
         };
@@ -102,6 +123,7 @@ fn create_event(record: JournalRecord) -> Event {
 
 struct JournaldServer<T> {
     journal: Journal,
+    units: HashSet<String>,
     channel: T,
     shutdown: std::sync::mpsc::Receiver<()>,
 }
@@ -123,6 +145,13 @@ impl<T: Sink<SinkItem = JournalRecord, SinkError = ()>> JournaldServer<T> {
                         break;
                     }
                 };
+                if self.units.len() > 0 {
+                    if let Some(unit) = record.get("_SYSTEMD_UNIT") {
+                        if !self.units.contains(unit) {
+                            continue;
+                        }
+                    }
+                }
                 match channel.send(record).wait() {
                     Ok(_) => {}
                     Err(()) => error!(message = "Could not send journald log"),
